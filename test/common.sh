@@ -4,7 +4,12 @@
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
-SCRIPTS_DIR="$PROJECT_DIR/scripts"
+# Python-скрипты могут лежать в scripts/ или рядом с .sh — берём, где они есть
+if [[ -f "$PROJECT_DIR/scripts/txt_to_fasta.py" ]]; then
+    SCRIPTS_DIR="$PROJECT_DIR/scripts"
+else
+    SCRIPTS_DIR="$PROJECT_DIR"
+fi
 
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
 die() { log "ОШИБКА: $*"; exit 1; }

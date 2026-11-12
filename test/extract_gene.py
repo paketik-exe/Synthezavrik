@@ -21,10 +21,15 @@ def main() -> None:
     ap.add_argument("--exact", action="store_true", help="точное совпадение ID")
     args = ap.parse_args()
 
-    matches = []
+    exact, partial = [], []
     for rec in SeqIO.parse(args.fasta, "fasta"):
-        if (rec.id == args.query) if args.exact else (args.query in rec.id):
-            matches.append(rec)
+        if rec.id == args.query:
+            exact.append(rec)
+        elif not args.exact and args.query in rec.id:
+            partial.append(rec)
+    # Точное совпадение ID всегда приоритетнее подстроки
+    # (иначе запрос "gene1" мог бы взять "gene10", если тот стоит раньше в файле)
+    matches = exact or partial
 
     if not matches:
         sys.exit(f"ОШИБКА: запись '{args.query}' не найдена в {args.fasta}")

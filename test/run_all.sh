@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # run_all.sh — ПОЛНЫЙ цикл одной командой:
-#   (setup, если ещё не делался) -> prepare_dataset -> run_gene для гена(ов) -> zip
+#   (setup, если ещё не делался) -> prepare_dataset -> run_gene для гена(ов)
+#   -> [--origin] происхождение гена (classify_gene.sh) -> zip
 #
 # Использование:
 #   ./run_all.sh <input.txt|.fasta> -g ГЕН          [опции]   # один ген
@@ -12,6 +13,11 @@
 #   -n, --name ИМЯ   имя датасета (по умолчанию — имя файла без расширения)
 #   --force          пересоздать датасет (делается и сам, если файл изменился)
 #   --no-zip         не упаковывать результаты в архив
+# Происхождение гена (дупликация / древний / de novo / ...):
+#   --origin              определить происхождение онлайн (NCBI, ничего не скачивается)
+#   --origin-offline      то же по локальным референсам (./fetch_references.sh)
+#   --ingroup a,b         близкие виды (по умолчанию dsim,dsec)
+#   --outgroup a,b        далёкие виды для поиска в геномах (по умолчанию dyak,dere,dana,dpse,dvir)
 #   всё остальное (-e, -t, --min-pident, --top, ...) передаётся в run_gene.sh
 #
 # Результат: results/ДАТАСЕТ/ГЕН/..., results/ДАТАСЕТ/summary.tsv,
@@ -20,10 +26,11 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 INPUT=""; DATASET=""; FORCE=0; ZIP=1; ALL=0
 GENES=(); GENES_FILE=""; PASS=()
+ORIGIN=0; ORIGIN_MODE=--online; INGROUP="dsim,dsec"; OUTGROUP="dyak,dere,dana,dpse,dvir"; THREADS=2
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -33,6 +40,11 @@ while [[ $# -gt 0 ]]; do
         -n|--name)   DATASET="${2:?нужно имя}"; shift 2 ;;
         --force)     FORCE=1; shift ;;
         --no-zip)    ZIP=0; shift ;;
+        --origin)    ORIGIN=1; ORIGIN_MODE=--online; shift ;;
+        --origin-offline) ORIGIN=1; ORIGIN_MODE=--use-references; shift ;;
+        --ingroup)   INGROUP="${2:?}"; shift 2 ;;
+        --outgroup)  OUTGROUP="${2:?}"; shift 2 ;;
+        -t|--threads) THREADS="${2:?}"; PASS+=(-t "$2"); shift 2 ;;
         -h|--help)   usage; exit 0 ;;
         -*)          PASS+=("$1"); [[ $# -ge 2 && "$2" != -* ]] && { PASS+=("$2"); shift; }; shift ;;
         *)           [[ -z "$INPUT" ]] && INPUT="$1" || die "Лишний аргумент: $1"; shift ;;
@@ -85,7 +97,7 @@ fi
 RES="$PROJECT_DIR/results/$DATASET"
 mkdir -p "$RES"
 SUMMARY="$RES/summary.tsv"
-printf 'gene\tstatus\tbest_frame\tn_hits\ttree\n' > "$SUMMARY"
+printf 'gene\tstatus\tbest_frame\tn_hits\ttree\torigin\tconfidence\n' > "$SUMMARY"
 
 n_ok=0; n_fail=0; i=0
 for gene in "${GENES[@]}"; do
@@ -95,14 +107,33 @@ for gene in "${GENES[@]}"; do
     d="$RES/$gs"
     rm -f "$d/${gs}_best_frame.txt" "$d/${gs}_blastp_hit_ids.txt"   # чтобы в сводку не попало старое
     if "$PROJECT_DIR/run_gene.sh" -d "$DATASET" -g "$gene" "${PASS[@]}"; then
-        status=ok; n_ok=$((n_ok + 1))
+        status=ok
     else
-        status=failed; n_fail=$((n_fail + 1))
+        status=failed     # например, нет гомологов — для de novo это нормально
+    fi
+    origin="-"; conf="-"
+    if [[ $ORIGIN -eq 1 ]]; then
+        log "--- происхождение гена $gene ---"
+        rm -f "$d/origin/origin.tsv"
+        "$PROJECT_DIR/classify_gene.sh" -d "$DATASET" -g "$gene" $ORIGIN_MODE \
+            --ingroup "$INGROUP" --outgroup "$OUTGROUP" -t "$THREADS" \
+            || log "Классификация $gene завершилась с ошибкой"
+        if [[ -s "$d/origin/origin.tsv" ]]; then
+            origin="$(python3 -c 'import sys,csv; r=list(csv.DictReader(open(sys.argv[1]),delimiter="\t"))[0]; print(r["verdict"]+"\t"+r["confidence"])' "$d/origin/origin.tsv")"
+            conf="${origin#*$'\t'}"; origin="${origin%%$'\t'*}"
+        fi
+    fi
+    # ген успешен, если построено дерево, или (при --origin) определено происхождение
+    if [[ $status == ok || ( $ORIGIN -eq 1 && "$origin" != "-" ) ]]; then
+        n_ok=$((n_ok + 1))
+    else
+        n_fail=$((n_fail + 1))
     fi
     bf="$(cat "$d/${gs}_best_frame.txt" 2>/dev/null || echo -)"
     nh="$( { wc -l < "$d/${gs}_blastp_hit_ids.txt"; } 2>/dev/null || echo 0)"
     tree="$([[ -s "$d/phylogeny/${gs}_blastp.treefile" ]] && echo yes || echo no)"
-    printf '%s\t%s\t%s\t%s\t%s\n' "$gene" "$status" "$bf" "$nh" "$tree" >> "$SUMMARY"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$gene" "$status" "$bf" "$nh" "$tree" "$origin" "$conf" >> "$SUMMARY"
+    [[ $ORIGIN -eq 0 ]] || log "Происхождение $gene: $origin ($conf)"
 done
 
 # ---------- 4. Архив ----------

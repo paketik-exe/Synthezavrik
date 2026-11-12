@@ -66,6 +66,15 @@ def show_gene(dataset: str, gene: str) -> None:
         return
     phylo = d / "phylogeny"
 
+    otsv, orep = d / "origin" / "origin.tsv", d / "origin" / "origin_report.md"
+    if otsv.exists():
+        o = pd.read_csv(otsv, sep="\t").iloc[0]
+        st.subheader(f"Происхождение: {o['verdict']}")
+        st.caption(f"Уверенность: {o['confidence']} · {o['reason']}")
+        if orep.exists():
+            with st.expander("Ход решения по алгоритму (метрики по этапам)"):
+                st.markdown(orep.read_text())
+
     best = d / f"{gs}_best_frame.txt"
     c1, c2, c3 = st.columns(3)
     c1.metric("Лучшая рамка", best.read_text().strip() if best.exists() else "—")
@@ -124,6 +133,15 @@ with st.sidebar:
     max_targets = st.number_input("max_target_seqs", 1, 10000, 100)
     min_orf = st.number_input("Мин. длина ORF", 30, 100000, 90)
 
+    st.header("Происхождение гена")
+    do_origin = st.checkbox("Определить происхождение", value=True,
+                            help="Дупликация / древний ген / слияние / HGT / de novo / TE-ncRNA")
+    origin_mode = st.radio("Источник данных", ["Онлайн (NCBI)", "Локальные референсы"],
+                           help="Онлайн ничего не скачивает, но каждый удалённый поиск занимает минуты. "
+                                "Локальные — после ./fetch_references.sh")
+    ingroup = st.text_input("Близкие виды (ingroup)", "dsim,dsec")
+    outgroup = st.text_input("Далёкие виды (геномы)", "dyak,dere,dana,dpse,dvir")
+
 up = st.file_uploader("Файл с последовательностями (.txt с блоками «raw sequence for …» или FASTA)",
                       type=["txt", "fasta", "fa", "fna", "fas"])
 if up is None:
@@ -155,6 +173,9 @@ if st.button("▶ Запустить анализ", type="primary", disabled=not
            "-e", evalue, "-t", str(threads), "--min-pident", str(min_pident),
            "--min-qcov", str(min_qcov), "--min-len", str(min_len), "--top", str(top),
            "--max-targets", str(max_targets), "--min-orf", str(min_orf)]
+    if do_origin:
+        cmd += ["--origin" if origin_mode.startswith("Онлайн") else "--origin-offline",
+                "--ingroup", ingroup, "--outgroup", outgroup]
     if mode == "Все гены файла":
         cmd.append("--all")
     elif len(genes) == 1:
@@ -175,6 +196,8 @@ if st.button("▶ Запустить анализ", type="primary", disabled=not
         lines.append(line.rstrip("\n"))
         if m := re.search(r"=== \[(\d+)/(\d+)\]", line):
             done_genes = int(m.group(1)) - 1
+        if "--- происхождение гена" in line:
+            progress.progress(min((done_genes + 0.9) / n, 1.0), text="Определяю происхождение (онлайн-поиск — минуты)…")
         if m := re.search(r"\[(\d+)/10\]", line):
             frac = (done_genes + int(m.group(1)) / 10) / n
             progress.progress(min(frac, 1.0), text=line.strip()[-120:])

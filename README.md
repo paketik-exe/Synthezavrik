@@ -16,7 +16,7 @@
 | Иные механизмы: одомашнивание мобильного элемента / из ncRNA | 3.2.1 |
 | Неопределённо | 2.3.2 / 3.2.2, либо нет ORF, либо не хватает данных |
 
-Метрики, пороги и обоснование каждого узла описаны в [`test/ALGORITHM.md`](test/ALGORITHM.md).
+Метрики, пороги и обоснование каждого узла описаны в [`src/ALGORITHM.md`](src/ALGORITHM.md).
 
 ## Схема работы
 
@@ -54,12 +54,12 @@ classify_origin.py ─► вердикт + origin_report.md + origin.tsv
 
 ## Запуск
 
-Все команды выполняются из папки `test/`. На Windows — в WSL (Ubuntu); проект держите внутри Linux (`~/…`), а не на диске `C:` или в OneDrive.
+Все команды выполняются из папки `src/`. На Windows — в WSL (Ubuntu); проект держите внутри Linux (`~/…`), а не на диске `C:` или в OneDrive.
 
 ### 1. Установка (один раз)
 
 ```bash
-cd ~/Synthezavrik/test
+cd ~/Synthezavrik/src
 chmod +x *.sh
 conda deactivate 2>/dev/null   # если стоит Anaconda: окружение base мешает .venv
 ./setup.sh                     # спросит пароль sudo
@@ -67,7 +67,7 @@ conda deactivate 2>/dev/null   # если стоит Anaconda: окружени�
 
 `setup.sh` ставит BLAST+, MAFFT, EMBOSS, IQ-TREE и создаёт `.venv` с Python-библиотеками. Если apt занят (`Could not get lock … unattended-upgr`), подождите несколько минут и запустите снова.
 
-В VS Code выберите интерпретатор `test/.venv/bin/python` (**Ctrl+Shift+P → Python: Select Interpreter**).
+В VS Code выберите интерпретатор `src/.venv/bin/python` (**Ctrl+Shift+P → Python: Select Interpreter**).
 
 ### 2. Веб-интерфейс (проще всего)
 
@@ -128,7 +128,7 @@ conda deactivate 2>/dev/null   # если стоит Anaconda: окружени�
 
 ## Что программа даёт на выходе
 
-Все результаты лежат в `test/results/<датасет>/`.
+Все результаты лежат в `src/results/<датасет>/`.
 
 ### Сводки по датасету
 
@@ -137,7 +137,7 @@ conda deactivate 2>/dev/null   # если стоит Anaconda: окружени�
 | `summary.tsv` | по строке на ген: `gene`, `status` (построено ли дерево), `best_frame`, `n_hits`, `tree`, `origin` (вердикт), `confidence` |
 | `origin_summary.tsv` | по строке на ген: `gene`, `verdict`, `confidence`, `reason` |
 | `../<датасет>.zip` | архив всех результатов датасета |
-| `test/logs/<датасет>_<ген>_<время>.log` | полный лог каждого запуска анализа гена |
+| `src/logs/<датасет>_<ген>_<время>.log` | полный лог каждого запуска анализа гена |
 
 ### Гомологи и дерево: `<ген>/`
 
@@ -234,7 +234,7 @@ conda deactivate 2>/dev/null   # если стоит Anaconda: окружени�
 | **Streamlit**, **pandas** | веб-интерфейс и таблицы в нём |
 | стандартная библиотека | `ncbi_online.py` (HTTP-запросы к NCBI), `classify_origin.py`, `pick_orf.py`, `synteny.py`, `txt_to_fasta.py` — без внешних зависимостей |
 
-### Скрипты проекта (`test/`)
+### Скрипты проекта (`src/`)
 
 | Скрипт | Назначение |
 |---|---|

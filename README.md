@@ -67,7 +67,7 @@ candidates.fasta ──► нуклеотидная BLAST-база
 3. Держите проект **внутри Linux** (`~/…`), а не на диске `C:` и тем более не в OneDrive. Через `/mnt/c` всё работает медленнее, а OneDrive начнёт синхронизировать тысячи файлов виртуального окружения и результатов.
    ```bash
    cd ~
-   git clone https://github.com/<аккаунт>/Synthezavrik.git
+   git clone https://github.com/paketik-exe/Synthezavrik.git
    # или, если проект уже лежит на Windows:
    # cp -r "/mnt/c/Users/<пользователь>/…/Synthezavrik" ~/
    ```

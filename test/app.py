@@ -19,7 +19,8 @@ SCRIPTS = ROOT / "scripts" if (ROOT / "scripts" / "txt_to_fasta.py").exists() el
 UPLOADS = ROOT / "data" / "uploads"
 RESULTS = ROOT / "results"
 BLAST_COLS = ["qseqid", "sseqid", "pident", "length", "qcovs", "evalue", "bitscore", "stitle"]
-REQUIRED = ["blastn", "blastp", "makeblastdb", "blastdbcmd", "mafft", "transeq", "getorf"]
+EXTRA_COLS = ["qstart", "qend", "sstart", "send", "sseq"]
+REQUIRED = ["blastn", "blastp", "makeblastdb", "mafft", "transeq", "getorf"]
 
 
 def load_parser():
@@ -45,7 +46,9 @@ def zip_dir(path: Path) -> bytes:
 def read_blast(path: Path) -> pd.DataFrame | None:
     if not path.exists() or path.stat().st_size == 0:
         return None
-    return pd.read_csv(path, sep="\t", names=BLAST_COLS)
+    df = pd.read_csv(path, sep="\t", header=None)
+    df.columns = (BLAST_COLS + EXTRA_COLS)[: df.shape[1]]
+    return df.drop(columns=["sseq"], errors="ignore")  # длинная строка, в таблице не нужна
 
 
 def show_df(df: pd.DataFrame | None) -> None:
@@ -114,8 +117,8 @@ with st.sidebar:
     st.header("Параметры")
     evalue = st.text_input("e-value", "1e-5")
     threads = st.number_input("Потоки", 1, os.cpu_count() or 1, min(4, os.cpu_count() or 1))
-    min_pident = st.number_input("Мин. % идентичности", 0, 100, 30)
-    min_qcov = st.number_input("Мин. покрытие запроса, %", 0, 100, 50)
+    min_pident = st.number_input("Мин. % идентичности", 0, 100, 25)
+    min_qcov = st.number_input("Мин. покрытие запроса, % (0 — не проверять)", 0, 100, 0)
     min_len = st.number_input("Мин. длина выравнивания", 1, 100000, 30)
     top = st.number_input("Сколько лучших хитов брать", 1, 1000, 50)
     max_targets = st.number_input("max_target_seqs", 1, 10000, 100)

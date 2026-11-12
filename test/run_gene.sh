@@ -13,8 +13,8 @@
 # Опции (в скобках — значения по умолчанию):
 #   -e, --evalue        порог e-value               (1e-5)
 #   -t, --threads       число потоков               (2)
-#   --min-pident        мин. % идентичности         (30)
-#   --min-qcov          мин. покрытие запроса, %    (50)
+#   --min-pident        мин. % идентичности         (25)
+#   --min-qcov          мин. покрытие запроса, %    (0 = не проверять)
 #   --min-len           мин. длина выравнивания     (30)
 #   --top               сколько лучших хитов брать  (50)
 #   --max-targets       max_target_seqs для BLAST   (100)
@@ -33,7 +33,7 @@ usage() {
 
 DATASET=""; GENE=""
 EVALUE="1e-5"; THREADS=2
-MIN_PIDENT=30; MIN_QCOV=50; MIN_LEN=30
+MIN_PIDENT=25; MIN_QCOV=0; MIN_LEN=30
 TOP_N=50; MAX_TARGETS=100
 MIN_ORF=90; ORF_FIND=3
 
@@ -58,7 +58,7 @@ done
 [[ -n "$DATASET" && -n "$GENE" ]] || { usage; exit 1; }
 
 activate_venv
-require_cmd blastn blastp blastdbcmd mafft getorf
+require_cmd blastn blastp mafft getorf
 IQTREE="$(find_iqtree)" || die "IQ-TREE не найден. Выполните ./setup.sh"
 
 # ---------- Пути ----------
@@ -112,7 +112,7 @@ blastp \
     -evalue "$EVALUE" \
     -max_target_seqs "$MAX_TARGETS" \
     -max_hsps 1 \
-    -outfmt "6 qseqid sseqid pident length qcovs evalue bitscore stitle" \
+    -outfmt "6 qseqid sseqid pident length qcovs evalue bitscore stitle qstart qend sstart send sseq" \
     -num_threads "$THREADS" \
     -out "${P}_blastp.tsv"
 
@@ -127,8 +127,26 @@ awk -F'\t' -v OFS='\t' \
      && substr($2, 1, length(self)) != self' \
     "${P}_blastp.tsv" > "${P}_blastp.filtered.tsv"
 
-[[ -s "${P}_blastp.filtered.tsv" ]] \
-    || die "После фильтрации не осталось хитов. Ослабьте --min-pident / --min-qcov / --evalue"
+if [[ ! -s "${P}_blastp.filtered.tsv" ]]; then
+    # Диагностика: какой критерий отсекает хиты и что вообще нашлось
+    awk -F'\t' -v pid="$MIN_PIDENT" -v qcov="$MIN_QCOV" -v ev="$EVALUE" -v len="$MIN_LEN" \
+        -v self="${REC_ID}_" '
+        substr($2, 1, length(self)) == self { s++; next }
+        { n++
+          if ($3+0 <  pid)  a++
+          if ($5+0 <  qcov) b++
+          if ($6+0 >  ev+0) c++
+          if ($4+0 <  len)  d++ }
+        END {
+          printf "      Всего хитов: %d, из них self (сам ген): %d, чужих: %d\n", n+s, s+0, n+0
+          printf "      Не прошли: %%идентичности < %s: %d | покрытие < %s%%: %d | e-value > %s: %d | длина < %s: %d\n", \
+                 pid, a+0, qcov, b+0, ev, c+0, len, d+0
+        }' "${P}_blastp.tsv" >&2
+    log "      Лучшие чужие хиты (qseqid sseqid pident length qcovs evalue bitscore):"
+    awk -F'\t' -v self="${REC_ID}_" 'substr($2, 1, length(self)) != self' "${P}_blastp.tsv" \
+        | sort -t$'\t' -k7,7gr | awk -F'\t' -v OFS='\t' 'NR <= 10 {print "        "$1,$2,$3,$4,$5,$6,$7}' >&2
+    die "После фильтрации не осталось хитов. Смотрите статистику выше и ослабьте нужный порог."
+fi
 
 # ---------- 17 (автоматически). Лучшая рамка = запрос с макс. bitscore ----------
 # Считаем по отфильтрованным хитам БЕЗ self-хитов: иначе каждая рамка
@@ -138,30 +156,25 @@ BEST_FRAME="$(awk -F'\t' '$7+0>m {m=$7+0; q=$1} END{print q}' "${P}_blastp.filte
 log "      Лучшая рамка: $BEST_FRAME"
 echo "$BEST_FRAME" > "${P}_best_frame.txt"
 
-# ---------- 14. Топ-N по bitscore ----------
-sort -t$'\t' -k7,7gr "${P}_blastp.filtered.tsv" -o "${P}_blastp.sorted.tmp"
-head -n "$TOP_N" "${P}_blastp.sorted.tmp" > "${P}_blastp.top${TOP_N}.tsv"
-rm -f "${P}_blastp.sorted.tmp"
+# ---------- 14. Топ-N по bitscore: только лучшая рамка, один хит на кандидата ----------
+# Хиты других рамок запроса совпадают с другими участками гена и в одно
+# выравнивание с лучшей рамкой не годятся. Один кандидат (X) может найтись
+# через несколько своих рамок (X_1, X_4) — оставляем лучший по bitscore.
+awk -F'\t' -v bf="$BEST_FRAME" '$1 == bf' "${P}_blastp.filtered.tsv" \
+    | sort -t$'\t' -k7,7gr \
+    | awk -F'\t' -v n="$TOP_N" '{ c = $2; sub(/_[0-9]+$/, "", c) } !seen[c]++ && ++k <= n' \
+    > "${P}_blastp.top${TOP_N}.tsv"
 
-# ---------- 15. Уникальные ID хитов ----------
-cut -f2 "${P}_blastp.top${TOP_N}.tsv" | sort -u > "${P}_blastp_hit_ids.txt"
+# ---------- 15–18. Вход для выравнивания: только выровненные участки ----------
+log "[6/10] Собираю участки для выравнивания..."
+python3 "$SCRIPTS_DIR/build_msa_input.py" \
+    "${P}_blastp.top${TOP_N}.tsv" "${P}_6frames.faa" "$BEST_FRAME" \
+    "${P}_msa_input.faa" "${P}_blastp_hit_ids.txt"
 log "      Уникальных хитов: $(wc -l < "${P}_blastp_hit_ids.txt")"
-
-# ---------- 16. Последовательности хитов ----------
-log "[6/10] Извлекаю белки-хиты..."
-blastdbcmd -db "$BLASTP_DB" -entry_batch "${P}_blastp_hit_ids.txt" -out "${P}_blastp_hits.faa"
-
-# ---------- 17. Белок в лучшей рамке ----------
-python3 "$SCRIPTS_DIR/extract_gene.py" \
-    --fasta "${P}_6frames.faa" --query "$BEST_FRAME" --exact \
-    --out "${P}_best_frame.faa" >/dev/null
-
-# ---------- 18. Вход для выравнивания ----------
-cat "${P}_best_frame.faa" "${P}_blastp_hits.faa" > "${P}_msa_input.faa"
 
 # ---------- 19. MAFFT ----------
 log "[7/10] Множественное выравнивание (MAFFT)..."
-mafft --auto --thread "$THREADS" "${P}_msa_input.faa" > "${P}_alignment.fasta"
+mafft --auto --quiet --thread "$THREADS" "${P}_msa_input.faa" > "${P}_alignment.fasta"
 
 # ---------- 20. IQ-TREE ----------
 N_SEQ="$(count_fasta "${P}_alignment.fasta")"
